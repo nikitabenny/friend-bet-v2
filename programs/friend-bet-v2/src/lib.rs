@@ -8,8 +8,14 @@ declare_id!("DoYwUP9Ffnvq1UYTnywWKSRYdGgA3X4H74GZj39nLGYW");
 pub mod friend_bet_v2 {
     use super::*;
 
-    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: u64) -> Result<()> {
+    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64) -> Result<()> {
         let creator_key =  ctx.accounts.signer.key();
+
+        //validation
+        require!(init_stake > 0, MyError::InvalidAmount);
+        let now = Clock::get()?.unix_timestamp;
+        require!(deadline > (now + 3600), MyError::InvalidDeadline);
+
 
         //Setting up a new Bet
         ctx.accounts.new_bet.init_stake = init_stake;
@@ -102,7 +108,7 @@ pub struct BetAccount{
     pub creator: Pubkey,
     pub init_stake: u64,
     pub resolver: Pubkey,
-    pub deadline: u64,
+    pub deadline: i64,
     pub status: BetStatus,
     pub outcome: Option<Outcome>,
     pub bump: u8
@@ -115,7 +121,7 @@ pub struct Vault{
     pub id: u64, //same as bet id
     pub creator: Pubkey,
     pub amount: u64,
-    pub deadline: u64,
+    pub deadline: i64,
     pub bump: u8
 }
 
@@ -125,6 +131,12 @@ pub enum BetStatus{
     Accepted,
     Resolved,
     Cancelled
+}
+
+#[error_code]
+pub enum MyError{
+    InvalidAmount,
+    InvalidDeadline
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -147,7 +159,7 @@ pub struct CreatorProfile {
 #[account]
 pub struct Participant{
     pub owner: Pubkey, 
-    pub deadline: u64,
+    pub deadline: i64,
     pub stake: u64,
     pub bet: Pubkey, //points to Bet participating in
     pub bump: u8
