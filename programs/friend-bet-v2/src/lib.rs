@@ -6,25 +6,29 @@ declare_id!("DoYwUP9Ffnvq1UYTnywWKSRYdGgA3X4H74GZj39nLGYW");
 
 #[program]
 pub mod friend_bet_v2 {
-    use super::*;
 
-    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64) -> Result<()> {
+use super::*;
+
+    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u8, sides: u8) -> Result<()> {
         let creator_key =  ctx.accounts.signer.key();
+        let bet_id = ctx.accounts.new_creator.next_bet_id;
 
         //validation
         require!(init_stake > 0, MyError::InvalidAmount);
         let now = Clock::get()?.unix_timestamp;
         require!(deadline > (now + 3600), MyError::InvalidDeadline);
-
+        require!(sides < 5, MyError::InvalidSides);
+        require!(choice < sides, MyError::InvalidChoice);
 
         //Setting up a new Bet
         ctx.accounts.new_bet.init_stake = init_stake;
         ctx.accounts.new_bet.deadline = deadline;
         ctx.accounts.new_bet.creator = creator_key;
+        ctx.accounts.new_bet.sides = sides;
 
         //Setting up a new Vault
         ctx.accounts.vault.creator = creator_key;
-        ctx.accounts.vault.id = ctx.accounts.new_creator.next_bet_id;
+        ctx.accounts.vault.id = bet_id;
         //transfer creator's stake to vault
         
         let cpi_accounts = Transfer {
@@ -41,19 +45,28 @@ pub mod friend_bet_v2 {
         ctx.accounts.vault.amount +=  ctx.accounts.new_bet.init_stake;
 
 
-        //Setting Up a New Creator Profile
+        //Setting Up a New Creator Profile and Creator's Participant
         ctx.accounts.new_creator.creator = creator_key;
+        ctx.accounts.new_particip.owner = creator_key;
+        ctx.accounts.new_particip.deadline = deadline;
+        ctx.accounts.new_particip.stake = init_stake;
+        ctx.accounts.new_particip.bet = ctx.accounts.new_bet.key();
+
+        ctx.accounts.new_particip.choice = choice;
 
         //Link Bet id to creators next id
-        ctx.accounts.new_bet.id = ctx.accounts.new_creator.next_bet_id;
+        ctx.accounts.new_bet.id = bet_id;
 
-        //Status updates
+        //Status updates & resolution
         ctx.accounts.new_creator.next_bet_id += 1;
         ctx.accounts.new_bet.status = BetStatus::Created;
+        ctx.accounts.new_bet.resolver = creator_key; //bet to be resolved by creator
+
         
         ctx.accounts.new_bet.bump = ctx.bumps.new_bet;
         ctx.accounts.new_creator.bump = ctx.bumps.new_creator;
         ctx.accounts.vault.bump = ctx.bumps.vault;
+        ctx.accounts.new_particip.bump = ctx.bumps.new_particip;
 
 
         msg!("Bet Created!");
@@ -78,7 +91,7 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 100,
+        space = 99,
         seeds = [b"bet", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()],
         bump
     )]
@@ -93,6 +106,15 @@ pub struct CreateBet<'info> {
     )]
     pub vault: Account<'info,Vault>,
 
+    #[account(
+        init,
+        payer = signer,
+        space = 90,
+        seeds = [b"particip", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()], //creator is signer so its particp acc owner is signer
+        bump
+    )]
+    pub new_particip: Account<'info,Participant>,
+
 
     #[account(mut)]
     pub signer: Signer<'info>,
@@ -101,7 +123,7 @@ pub struct CreateBet<'info> {
 }
 
 // PDA seeds: [creator.key(), id.to_le_bytes()] + bet prefix
-// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (amount) + 32 (resolver) + 8 (deadline) + 1 (status) + 2 (outcome) + 1 (bump) = 100 bytes
+// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 1 (sides) + 1 (bump) = 99 bytes
 #[account]
 pub struct BetAccount{
     pub id: u64,
@@ -110,7 +132,7 @@ pub struct BetAccount{
     pub resolver: Pubkey,
     pub deadline: i64,
     pub status: BetStatus,
-    pub outcome: Option<Outcome>,
+    pub sides: u8,
     pub bump: u8
 }
 
@@ -136,14 +158,9 @@ pub enum BetStatus{
 #[error_code]
 pub enum MyError{
     InvalidAmount,
-    InvalidDeadline
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub enum Outcome{
-    CreatorWon,
-    OpponentWon,
-    Draw
+    InvalidDeadline,
+    InvalidChoice,
+    InvalidSides,
 }
 
 // PDA seeds: [creator.key()] + creator prefix
@@ -155,12 +172,14 @@ pub struct CreatorProfile {
     pub bump: u8,
 }
 
-// PDA seeds: [owner.key(), bet.key()] 
+// PDA seeds: [b"particip", owner.key(), bet_id.to_le_bytes()]
+// size: 8 (discriminator) + 32 (owner) + 8 (deadline) + 8 (stake) + 32 (bet) + 1 (bump) + 1 (choice) = 90 bytes
 #[account]
 pub struct Participant{
-    pub owner: Pubkey, 
+    pub owner: Pubkey,
     pub deadline: i64,
     pub stake: u64,
-    pub bet: Pubkey, //points to Bet participating in
-    pub bump: u8
+    pub bet: Pubkey,
+    pub bump: u8,
+    pub choice: u8
 }
