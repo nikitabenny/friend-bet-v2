@@ -15,16 +15,16 @@ pub mod friend_bet_v2 {
 #[derive(Accounts)]
 pub struct Initialize {}
 
+// PDA seeds: [creator.key(), id.to_le_bytes()]
 #[account]
-pub strut Bet{
-    pub id: u64
+pub struct Bet{
+    pub id: u64,
     pub creator: Pubkey,
-    pub ops: List<Pubkey>,
     pub amount: u64,
     pub resolver: Pubkey,
     pub deadline: u64,
-    pub status: BetStatus
-    pub outcome: Option<Outcome>
+    pub status: BetStatus,
+    pub outcome: Option<Outcome>,
     pub bump: u8
 }
 
@@ -34,4 +34,28 @@ pub enum BetStatus{
     Accepted,
     Resolved,
     Cancelled
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub enum Outcome{
+    CreatorWon,
+    OpponentWon,
+    Draw
+}
+
+// PDA seeds: [creator.key()]
+#[account]
+pub struct CreatorProfile {
+    pub creator: Pubkey,
+    pub next_bet_id: u64,
+    pub bump: u8,
+}
+
+// PDA seeds: [owner.key(), bet.key()]
+#[account]
+pub struct Participant{
+    pub owner: Pubkey, 
+    pub deadline: u64,
+    pub stake: u64,
+    pub bet: Pubkey //points to Bet participating in
 }
