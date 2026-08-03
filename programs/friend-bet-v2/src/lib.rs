@@ -9,14 +9,14 @@ pub mod friend_bet_v2 {
 
 use super::*;
 
-    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u8, sides: u8) -> Result<()> {
+    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u8, sides: u8, resolver:Pubkey) -> Result<()> {
         let creator_key =  ctx.accounts.signer.key();
         let bet_id = ctx.accounts.new_creator.next_bet_id;
 
         //validation
         require!(init_stake > 0, MyError::InvalidAmount);
         let now = Clock::get()?.unix_timestamp;
-        require!(deadline > (now + 3600), MyError::InvalidDeadline);
+        require!(deadline > (now + 3600), MyError::InvalidDeadline); //deadline at least one hour away
         require!(sides < 5, MyError::InvalidSides);
         require!(choice < sides, MyError::InvalidChoice);
 
@@ -60,7 +60,7 @@ use super::*;
         //Status updates & resolution
         ctx.accounts.new_creator.next_bet_id += 1;
         ctx.accounts.new_bet.status = BetStatus::Created;
-        ctx.accounts.new_bet.resolver = creator_key; //bet to be resolved by creator
+        ctx.accounts.new_bet.resolver = resolver; //bet to be resolved by creator
 
         
         ctx.accounts.new_bet.bump = ctx.bumps.new_bet;
@@ -72,6 +72,28 @@ use super::*;
         msg!("Bet Created!");
         Ok(())
     }
+
+    //Consult Resolver and Update Winner
+    pub fn resolve_bet(ctx:Context<ResolveBet>, winner: u8) -> Result<()> {
+        let resolver_key = ctx.accounts.bet.resolver;
+        let now = Clock::get()?.unix_timestamp;
+
+        //Validations
+        require!(now > ctx.accounts.bet.deadline, MyError::InvalidDeadline);
+        require!(ctx.accounts.signer.key() == resolver_key, MyError::UnverifiedSigner);
+        require!(ctx.accounts.bet.sides > winner, MyError::InvalidChoice);
+        require!(ctx.accounts.bet.status == BetStatus::Accepted, MyError::InvalidStatus);
+
+        
+        //Update Winner
+        ctx.accounts.bet.winning_choice = Some(winner);
+
+        //Status updates
+        ctx.accounts.bet.status = BetStatus::Resolved;
+        msg!("Bet Resolved!");
+        Ok(())
+    }
+
 }
 
 #[derive(Accounts)]
@@ -91,7 +113,7 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 99,
+        space = 101,
         seeds = [b"bet", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()],
         bump
     )]
@@ -122,8 +144,17 @@ pub struct CreateBet<'info> {
 
 }
 
+#[derive(Accounts)]
+pub struct ResolveBet<'info> {
+
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub bet: Account<'info, BetAccount>
+}
+
 // PDA seeds: [creator.key(), id.to_le_bytes()] + bet prefix
-// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 1 (sides) + 1 (bump) = 99 bytes
+// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 1 (sides) + 1 (bump) + 2 (winning choice)= 101 bytes
 #[account]
 pub struct BetAccount{
     pub id: u64,
@@ -133,7 +164,8 @@ pub struct BetAccount{
     pub deadline: i64,
     pub status: BetStatus,
     pub sides: u8,
-    pub bump: u8
+    pub bump: u8,
+    pub winning_choice: Option<u8>
 }
 
 // PDA seeds: [Creator.key() + bet_id.to_le_bytes()] + bet prefix
@@ -147,7 +179,7 @@ pub struct Vault{
     pub bump: u8
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum BetStatus{
     Created,
     Accepted,
@@ -161,6 +193,8 @@ pub enum MyError{
     InvalidDeadline,
     InvalidChoice,
     InvalidSides,
+    UnverifiedSigner,
+    InvalidStatus
 }
 
 // PDA seeds: [creator.key()] + creator prefix
