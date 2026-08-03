@@ -6,7 +6,6 @@ declare_id!("DoYwUP9Ffnvq1UYTnywWKSRYdGgA3X4H74GZj39nLGYW");
 
 #[program]
 pub mod friend_bet_v2 {
-
 use super::*;
 
     pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u8, sides: u8, resolver:Pubkey) -> Result<()> {
@@ -48,7 +47,6 @@ use super::*;
         //Setting Up a New Creator Profile and Creator's Participant
         ctx.accounts.new_creator.creator = creator_key;
         ctx.accounts.new_particip.owner = creator_key;
-        ctx.accounts.new_particip.deadline = deadline;
         ctx.accounts.new_particip.stake = init_stake;
         ctx.accounts.new_particip.bet = ctx.accounts.new_bet.key();
 
@@ -60,7 +58,7 @@ use super::*;
         //Status updates & resolution
         ctx.accounts.new_creator.next_bet_id += 1;
         ctx.accounts.new_bet.status = BetStatus::Created;
-        ctx.accounts.new_bet.resolver = resolver; //bet to be resolved by creator
+        ctx.accounts.new_bet.resolver = resolver; //bet to be resolved by 3rd party wallet
 
         
         ctx.accounts.new_bet.bump = ctx.bumps.new_bet;
@@ -70,6 +68,45 @@ use super::*;
 
 
         msg!("Bet Created!");
+        Ok(())
+    }
+
+    //Add Participant
+    pub fn accept_bet(ctx:Context<AcceptBet>, choice: u8, stake : u64) -> Result<()> {
+        //validation 
+        require!(stake > 0, MyError::InvalidAmount);
+        let now = Clock::get()?.unix_timestamp;
+
+        require!(now < ctx.accounts.bet.deadline, MyError::InvalidDeadline); //deadline is later
+        require!(choice < ctx.accounts.bet.sides, MyError::InvalidChoice);
+        require!(ctx.accounts.bet.status == BetStatus::Created || ctx.accounts.bet.status == BetStatus::Accepted, MyError::InvalidStatus);
+        require!(ctx.accounts.bet.id == ctx.accounts.vault.id, MyError::MismatchedVault);
+
+        //set up participant
+        ctx.accounts.particip.choice = choice;
+        ctx.accounts.particip.owner = ctx.accounts.signer.key();
+        ctx.accounts.particip.stake = stake;
+        ctx.accounts.particip.bet =  ctx.accounts.bet.key();
+        ctx.accounts.particip.bump = ctx.bumps.particip;
+
+
+        //transfer participant's stake to vault
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.signer.to_account_info(),
+            to: ctx.accounts.vault.to_account_info(),
+        };
+
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            cpi_accounts,
+        );
+
+        transfer(cpi_ctx, ctx.accounts.particip.stake)?;
+        ctx.accounts.vault.amount +=  ctx.accounts.particip.stake;
+
+        ctx.accounts.bet.status = BetStatus::Accepted;
+
+        msg!("Bet Accepted!");
         Ok(())
     }
 
@@ -93,6 +130,7 @@ use super::*;
         msg!("Bet Resolved!");
         Ok(())
     }
+
 
 }
 
@@ -131,7 +169,7 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 90,
+        space = 82,
         seeds = [b"particip", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()], //creator is signer so its particp acc owner is signer
         bump
     )]
@@ -144,13 +182,39 @@ pub struct CreateBet<'info> {
 
 }
 
+
+
 #[derive(Accounts)]
 pub struct ResolveBet<'info> {
 
-    #[account(mut)]
     pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
+
+    #[account(mut)]
     pub bet: Account<'info, BetAccount>
+}
+
+#[derive(Accounts)]
+pub struct AcceptBet<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+
+    #[account(mut)]
+    pub bet: Account<'info, BetAccount>,
+
+    #[account(
+        init,
+        payer = signer,
+        space = 82,
+        seeds = [b"particip", signer.key().as_ref(), &bet.id.to_le_bytes()], 
+        bump
+    )]
+    pub particip: Account<'info, Participant>,
+
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+    pub system_program: Program<'info, System>,
+
 }
 
 // PDA seeds: [creator.key(), id.to_le_bytes()] + bet prefix
@@ -168,7 +232,7 @@ pub struct BetAccount{
     pub winning_choice: Option<u8>
 }
 
-// PDA seeds: [Creator.key() + bet_id.to_le_bytes()] + bet prefix
+// PDA seeds: [Creator.key() + bet_id.to_le_bytes()] + vault prefix
 // size: 8 (discriminator) + 8 (bet_id) + 32 (creator) + 8 (amount) + 8 (deadline) + 1 (bump) = 65 bytes
 #[account]
 pub struct Vault{
@@ -183,7 +247,8 @@ pub struct Vault{
 pub enum BetStatus{
     Created,
     Accepted,
-    Resolved,
+    Resolved, //outcome determined  
+    Complete, //Payout Complete
     Cancelled
 }
 
@@ -194,7 +259,8 @@ pub enum MyError{
     InvalidChoice,
     InvalidSides,
     UnverifiedSigner,
-    InvalidStatus
+    InvalidStatus,
+    MismatchedVault
 }
 
 // PDA seeds: [creator.key()] + creator prefix
@@ -207,11 +273,10 @@ pub struct CreatorProfile {
 }
 
 // PDA seeds: [b"particip", owner.key(), bet_id.to_le_bytes()]
-// size: 8 (discriminator) + 32 (owner) + 8 (deadline) + 8 (stake) + 32 (bet) + 1 (bump) + 1 (choice) = 90 bytes
+// size: 8 (discriminator) + 32 (owner) + 8 (stake) + 32 (bet) + 1 (bump) + 1 (choice) = 82 bytes
 #[account]
 pub struct Participant{
     pub owner: Pubkey,
-    pub deadline: i64,
     pub stake: u64,
     pub bet: Pubkey,
     pub bump: u8,
