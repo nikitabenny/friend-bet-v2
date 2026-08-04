@@ -164,8 +164,37 @@ use super::*;
         Ok(())
     }
 
+    pub fn cancel_bet(ctx: Context<CancelBet>) -> Result<()> {
+    require!(ctx.accounts.bet.status == BetStatus::Created, MyError::InvalidStatus);
+    require!(ctx.accounts.signer.key() == ctx.accounts.bet.creator, MyError::UnverifiedSigner);
+    let now = Clock::get()?.unix_timestamp;
+    require!(now > ctx.accounts.bet.deadline, MyError::InvalidDeadline);
+
+    let refund = ctx.accounts.vault.amount;
+
+    **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= refund;
+    **ctx.accounts.signer.to_account_info().try_borrow_mut_lamports()? += refund;
+
+    ctx.accounts.bet.status = BetStatus::Cancelled;
+
+    msg!("Bet Cancelled, {} lamports refunded", refund);
+    Ok(())
+}
 
 
+
+}
+
+#[derive(Accounts)]
+pub struct CancelBet<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+
+    #[account(mut)]
+    pub bet: Account<'info, BetAccount>,
+
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
 }
 
 #[derive(Accounts)]
@@ -262,6 +291,8 @@ pub struct AcceptBet<'info> {
     pub vault: Account<'info, Vault>,
     pub system_program: Program<'info, System>,
 }
+
+
 
 // PDA seeds: [creator.key(), id.to_le_bytes()] + bet prefix
 // size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 8 (sides) + 1 (bump) + 9 (winning_choice) + 40 (side_totals) = 155 bytes
