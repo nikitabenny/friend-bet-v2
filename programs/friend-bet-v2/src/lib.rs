@@ -8,7 +8,7 @@ declare_id!("DoYwUP9Ffnvq1UYTnywWKSRYdGgA3X4H74GZj39nLGYW");
 pub mod friend_bet_v2 {
 use super::*;
 
-    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u8, sides: u8, resolver:Pubkey) -> Result<()> {
+    pub fn create_bet(ctx: Context<CreateBet>, init_stake: u64, deadline: i64, choice: u64, sides: u64, resolver:Pubkey) -> Result<()> {
         let creator_key =  ctx.accounts.signer.key();
         let bet_id = ctx.accounts.new_creator.next_bet_id;
 
@@ -48,6 +48,7 @@ use super::*;
         ctx.accounts.new_creator.creator = creator_key;
         ctx.accounts.new_particip.owner = creator_key;
         ctx.accounts.new_particip.stake = init_stake;
+        ctx.accounts.new_particip.claimed = false;
         ctx.accounts.new_particip.bet = ctx.accounts.new_bet.key();
 
         ctx.accounts.new_particip.choice = choice;
@@ -59,6 +60,9 @@ use super::*;
         ctx.accounts.new_creator.next_bet_id += 1;
         ctx.accounts.new_bet.status = BetStatus::Created;
         ctx.accounts.new_bet.resolver = resolver; //bet to be resolved by 3rd party wallet
+
+        //add stake to side's bet
+        ctx.accounts.new_bet.side_totals[choice as usize] += init_stake;
 
         
         ctx.accounts.new_bet.bump = ctx.bumps.new_bet;
@@ -72,7 +76,7 @@ use super::*;
     }
 
     //Add Participant
-    pub fn accept_bet(ctx:Context<AcceptBet>, choice: u8, stake : u64) -> Result<()> {
+    pub fn accept_bet(ctx:Context<AcceptBet>, choice: u64, stake : u64) -> Result<()> {
         //validation 
         require!(stake > 0, MyError::InvalidAmount);
         let now = Clock::get()?.unix_timestamp;
@@ -87,7 +91,11 @@ use super::*;
         ctx.accounts.particip.owner = ctx.accounts.signer.key();
         ctx.accounts.particip.stake = stake;
         ctx.accounts.particip.bet =  ctx.accounts.bet.key();
+        ctx.accounts.particip.claimed = false;
         ctx.accounts.particip.bump = ctx.bumps.particip;
+
+        //add stake to side's bet
+        ctx.accounts.bet.side_totals[choice as usize] += stake;
 
 
         //transfer participant's stake to vault
@@ -111,7 +119,7 @@ use super::*;
     }
 
     //Consult Resolver and Update Winner
-    pub fn resolve_bet(ctx:Context<ResolveBet>, winner: u8) -> Result<()> {
+    pub fn resolve_bet(ctx:Context<ResolveBet>, winner: u64) -> Result<()> {
         let resolver_key = ctx.accounts.bet.resolver;
         let now = Clock::get()?.unix_timestamp;
 
@@ -131,7 +139,43 @@ use super::*;
         Ok(())
     }
 
+    pub fn payout(ctx:Context<Payout>) -> Result<()> {
+        require!(ctx.accounts.bet.status == BetStatus::Resolved, MyError::InvalidStatus);
+        require!(ctx.accounts.participant.claimed == false, MyError::DoubleClaim);
+        let winning_choice = ctx.accounts.bet.winning_choice.unwrap();
+        require!(ctx.accounts.participant.choice == winning_choice, MyError::LoserClaim);
+        let total_winning_stake = ctx.accounts.bet.side_totals[winning_choice as usize];
 
+
+        let payout: u64 = (ctx.accounts.participant.stake as u128 * ctx.accounts.vault.amount as u128 / total_winning_stake as u128) as u64;
+
+        require!(total_winning_stake > 0, MyError::InvalidStatus);
+
+        **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= payout;
+        **ctx.accounts.signer.to_account_info().try_borrow_mut_lamports()? += payout;
+
+        ctx.accounts.participant.claimed = true;
+
+        msg!("Claimed {} lamports", payout);
+
+        Ok(())
+    }
+
+
+
+}
+
+#[derive(Accounts)]
+pub struct Payout<'info>{
+    #[account(mut)]
+    pub vault: Account<'info,Vault>,
+    #[account(mut)]
+    pub participant: Account<'info,Participant>,
+    #[account(mut)]
+    pub bet: Account<'info,BetAccount>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -151,7 +195,7 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 101,
+        space = 155,
         seeds = [b"bet", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()],
         bump
     )]
@@ -169,7 +213,7 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 82,
+        space = 90,
         seeds = [b"particip", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()], //creator is signer so its particp acc owner is signer
         bump
     )]
@@ -205,7 +249,7 @@ pub struct AcceptBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 82,
+        space = 90,
         seeds = [b"particip", signer.key().as_ref(), &bet.id.to_le_bytes()], 
         bump
     )]
@@ -214,11 +258,10 @@ pub struct AcceptBet<'info> {
     #[account(mut)]
     pub vault: Account<'info, Vault>,
     pub system_program: Program<'info, System>,
-
 }
 
 // PDA seeds: [creator.key(), id.to_le_bytes()] + bet prefix
-// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 1 (sides) + 1 (bump) + 2 (winning choice)= 101 bytes
+// size: 8 (discriminator) + 8 (id) + 32 (creator) + 8 (init_stake) + 32 (resolver) + 8 (deadline) + 1 (status) + 8 (sides) + 1 (bump) + 9 (winning_choice) + 40 (side_totals) = 155 bytes
 #[account]
 pub struct BetAccount{
     pub id: u64,
@@ -227,9 +270,10 @@ pub struct BetAccount{
     pub resolver: Pubkey,
     pub deadline: i64,
     pub status: BetStatus,
-    pub sides: u8,
+    pub sides: u64,
     pub bump: u8,
-    pub winning_choice: Option<u8>
+    pub winning_choice: Option<u64>,
+    pub side_totals: [u64; 5], // index = choice
 }
 
 // PDA seeds: [Creator.key() + bet_id.to_le_bytes()] + vault prefix
@@ -260,7 +304,9 @@ pub enum MyError{
     InvalidSides,
     UnverifiedSigner,
     InvalidStatus,
-    MismatchedVault
+    MismatchedVault,
+    DoubleClaim,
+    LoserClaim
 }
 
 // PDA seeds: [creator.key()] + creator prefix
@@ -273,12 +319,13 @@ pub struct CreatorProfile {
 }
 
 // PDA seeds: [b"particip", owner.key(), bet_id.to_le_bytes()]
-// size: 8 (discriminator) + 32 (owner) + 8 (stake) + 32 (bet) + 1 (bump) + 1 (choice) = 82 bytes
+// size: 8 (discriminator) + 32 (owner) + 8 (stake) + 32 (bet) + 1 (bump) + 8 (choice) + 1 (claimed) = 90 bytes
 #[account]
 pub struct Participant{
     pub owner: Pubkey,
     pub stake: u64,
     pub bet: Pubkey,
     pub bump: u8,
-    pub choice: u8
+    pub choice: u64,
+    pub claimed: bool
 }
