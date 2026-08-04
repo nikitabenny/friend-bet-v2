@@ -140,6 +140,9 @@ use super::*;
     }
 
     pub fn payout(ctx:Context<Payout>) -> Result<()> {
+        require!(ctx.accounts.signer.key() == ctx.accounts.participant.owner, MyError::UnverifiedSigner);
+        require!(ctx.accounts.participant.bet == ctx.accounts.bet.key(), MyError::MismatchedVault);
+        require!(ctx.accounts.bet.id == ctx.accounts.vault.id, MyError::MismatchedVault);
         require!(ctx.accounts.bet.status == BetStatus::Resolved, MyError::InvalidStatus);
         require!(ctx.accounts.participant.claimed == false, MyError::DoubleClaim);
         let winning_choice = ctx.accounts.bet.winning_choice.unwrap();
