@@ -11,7 +11,7 @@
 expected_for() {
     case "$1" in
         01_valid_open.json)               echo 0 ;;
-        02_valid_resolved.json)           echo 0 ;;
+        02_valid_resolve.json)            echo 0 ;;
         03_tampered_balance.json)         echo 1 ;;
         04_illegal_status_jump.json)      echo 1 ;;
         05_resolved_before_deadline.json) echo 1 ;;
