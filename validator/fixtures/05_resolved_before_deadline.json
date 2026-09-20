@@ -1,0 +1,27 @@
+{
+  "_comment": "Outcome written 100000s before the deadline. Should FAIL I5.",
+  "dump_time": 1754500000,
+  "bet": {
+    "address": "BetAAA111111111111111111111111111111111111",
+    "id": 0,
+    "creator": "CreAAA111111111111111111111111111111111111",
+    "resolver": "ResAAA111111111111111111111111111111111111",
+    "init_stake": 1000000000,
+    "deadline": 1754600000,
+    "status": "Resolved",
+    "sides": 2,
+    "winning_choice": 1,
+    "side_totals": [1000000000, 2000000000, 0, 0, 0]
+  },
+  "vault": {
+    "id": 0,
+    "creator": "CreAAA111111111111111111111111111111111111",
+    "amount": 3000000000,
+    "lamports": 3001294080,
+    "rent_exempt_min": 1294080
+  },
+  "participants": [
+    { "owner": "CreAAA111111111111111111111111111111111111", "bet": "BetAAA111111111111111111111111111111111111", "stake": 1000000000, "choice": 0, "claimed": false },
+    { "owner": "OppBBB222222222222222222222222222222222222", "bet": "BetAAA111111111111111111111111111111111111", "stake": 2000000000, "choice": 1, "claimed": false }
+  ]
+}

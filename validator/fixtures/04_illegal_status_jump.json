@@ -1,0 +1,26 @@
+{
+  "_comment": "Created -> Resolved with no counterparty and a null outcome. Should FAIL I3 and I4.",
+  "dump_time": 1754700000,
+  "bet": {
+    "address": "BetAAA111111111111111111111111111111111111",
+    "id": 0,
+    "creator": "CreAAA111111111111111111111111111111111111",
+    "resolver": "ResAAA111111111111111111111111111111111111",
+    "init_stake": 1000000000,
+    "deadline": 1754600000,
+    "status": "Resolved",
+    "sides": 2,
+    "winning_choice": null,
+    "side_totals": [1000000000, 0, 0, 0, 0]
+  },
+  "vault": {
+    "id": 0,
+    "creator": "CreAAA111111111111111111111111111111111111",
+    "amount": 1000000000,
+    "lamports": 1001294080,
+    "rent_exempt_min": 1294080
+  },
+  "participants": [
+    { "owner": "CreAAA111111111111111111111111111111111111", "bet": "BetAAA111111111111111111111111111111111111", "stake": 1000000000, "choice": 0, "claimed": false }
+  ]
+}

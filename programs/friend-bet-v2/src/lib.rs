@@ -28,6 +28,7 @@ use super::*;
         //Setting up a new Vault
         ctx.accounts.vault.creator = creator_key;
         ctx.accounts.vault.id = bet_id;
+        ctx.accounts.vault.deadline = deadline;
         //transfer creator's stake to vault
         
         let cpi_accounts = Transfer {
@@ -145,14 +146,13 @@ use super::*;
         require!(ctx.accounts.bet.id == ctx.accounts.vault.id, MyError::MismatchedVault);
         require!(ctx.accounts.bet.status == BetStatus::Resolved, MyError::InvalidStatus);
         require!(ctx.accounts.participant.claimed == false, MyError::DoubleClaim);
-        let winning_choice = ctx.accounts.bet.winning_choice.unwrap();
+        let winning_choice = ctx.accounts.bet.winning_choice.ok_or(MyError::InvalidStatus)?;
         require!(ctx.accounts.participant.choice == winning_choice, MyError::LoserClaim);
         let total_winning_stake = ctx.accounts.bet.side_totals[winning_choice as usize];
-
+        require!(total_winning_stake > 0, MyError::InvalidStatus);
 
         let payout: u64 = (ctx.accounts.participant.stake as u128 * ctx.accounts.vault.amount as u128 / total_winning_stake as u128) as u64;
 
-        require!(total_winning_stake > 0, MyError::InvalidStatus);
 
         **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= payout;
         **ctx.accounts.signer.to_account_info().try_borrow_mut_lamports()? += payout;
@@ -164,47 +164,20 @@ use super::*;
         Ok(())
     }
 
-    pub fn cancel_bet(ctx: Context<CancelBet>) -> Result<()> {
-    require!(ctx.accounts.bet.status == BetStatus::Created, MyError::InvalidStatus);
-    require!(ctx.accounts.signer.key() == ctx.accounts.bet.creator, MyError::UnverifiedSigner);
-    let now = Clock::get()?.unix_timestamp;
-    require!(now > ctx.accounts.bet.deadline, MyError::InvalidDeadline);
-
-    let refund = ctx.accounts.vault.amount;
-
-    **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= refund;
-    **ctx.accounts.signer.to_account_info().try_borrow_mut_lamports()? += refund;
-
-    ctx.accounts.bet.status = BetStatus::Cancelled;
-
-    msg!("Bet Cancelled, {} lamports refunded", refund);
-    Ok(())
 }
 
 
 
-}
-
-#[derive(Accounts)]
-pub struct CancelBet<'info> {
-    #[account(mut)]
-    pub signer: Signer<'info>,
-
-    #[account(mut)]
-    pub bet: Account<'info, BetAccount>,
-
-    #[account(mut)]
-    pub vault: Account<'info, Vault>,
-}
 
 #[derive(Accounts)]
 pub struct Payout<'info>{
     #[account(mut)]
+    pub bet: Account<'info,BetAccount>,
+    #[account(mut)]
     pub vault: Account<'info,Vault>,
     #[account(mut)]
     pub participant: Account<'info,Participant>,
-    #[account(mut)]
-    pub bet: Account<'info,BetAccount>,
+
     #[account(mut)]
     pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -223,6 +196,15 @@ pub struct CreateBet<'info> {
     )]
     pub new_creator: Account<'info,CreatorProfile>,
 
+    #[account(
+        init,
+        payer = signer,
+        space = 65,
+        seeds = [b"vault", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()],
+        bump
+    )]
+    pub vault: Account<'info,Vault>,
+
 
     #[account(
         init,
@@ -236,17 +218,8 @@ pub struct CreateBet<'info> {
     #[account(
         init,
         payer = signer,
-        space = 65,
-        seeds = [b"vault", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()],
-        bump
-    )]
-    pub vault: Account<'info,Vault>,
-
-    #[account(
-        init,
-        payer = signer,
         space = 90,
-        seeds = [b"particip", signer.key().as_ref(), &new_creator.next_bet_id.to_le_bytes()], //creator is signer so its particp acc owner is signer
+        seeds = [b"particip", signer.key().as_ref(), new_bet.key().as_ref()], //creator is signer so its particp acc owner is signer
         bump
     )]
     pub new_particip: Account<'info,Participant>,
@@ -282,12 +255,16 @@ pub struct AcceptBet<'info> {
         init,
         payer = signer,
         space = 90,
-        seeds = [b"particip", signer.key().as_ref(), &bet.id.to_le_bytes()], 
+        seeds = [b"particip", signer.key().as_ref(), bet.key().as_ref()], 
         bump
     )]
     pub particip: Account<'info, Participant>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", bet.creator.as_ref(), &bet.id.to_le_bytes()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, Vault>,
     pub system_program: Program<'info, System>,
 }
@@ -352,7 +329,7 @@ pub struct CreatorProfile {
     pub bump: u8,
 }
 
-// PDA seeds: [b"particip", owner.key(), bet_id.to_le_bytes()]
+// PDA seeds: [b"particip", owner.key(), bet.key()]
 // size: 8 (discriminator) + 32 (owner) + 8 (stake) + 32 (bet) + 1 (bump) + 8 (choice) + 1 (claimed) = 90 bytes
 #[account]
 pub struct Participant{
