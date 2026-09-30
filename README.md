@@ -15,7 +15,6 @@ tests/                    Anchor/mocha integration tests (TypeScript)
 validator/                offline C++ tool that independently re-checks
                            on-chain invariants from a JSON snapshot — see
                            validator/README.md
-app/, backend/            scaffolding, intentionally not built out yet
 ```
 
 ## Program
